@@ -250,7 +250,7 @@ class ChargingStation:
 
     def modify_booking(self, sim_time, booking: ChargingProcess):
         raise NotImplemented
-    
+
     def get_charging_slots(self, sim_time, vehicle, planned_arrival_time, planned_start_soc, desired_end_soc, max_offers_per_station=1):
         """ Returns specific charging possibilities for a vehicle at this charging station
         a future time, place with estimated SOC and desired SOC.
@@ -296,7 +296,7 @@ class ChargingStation:
             # only keep offer with earliest start
             list_station_offers = sorted(list_station_offers, key=lambda x: x[2])[:max_offers_per_station]
         return list_station_offers
-    
+
     def add_external_booking(self, start_time, end_time, sim_time, veh_struct):
         """ this methods adds an external booking to the charging station and therefor occupies a socket for a given time
         :param start_time: start time of booking
@@ -372,32 +372,32 @@ class Depot(ChargingStation):
         super().__init__(station_id, ch_op_id, node, socket_ids, max_socket_powers)
         self.number_parking_spots = number_parking_spots
         self.deactivated_vehicles: tp.List[SimulationVehicle] = []
-        
+
     @property
     def free_parking_spots(self):
         return self.number_parking_spots - len(self.deactivated_vehicles)
-    
+
     @property
     def parking_vehicles(self):
         return len(self.deactivated_vehicles)
-        
+
     def schedule_inactive(self, veh_obj):
         """ adds the vehicle to park at the depot
         :param veh_obj: vehicle obj"""
         LOG.debug(f"park vid {veh_obj.vid} in depot {self.id} with parking vids {[x.vid for x in self.deactivated_vehicles]}")
         self.deactivated_vehicles.append(veh_obj)
-        
+
     def schedule_active(self, veh_obj):
         """ removes the vehicle from the depot
         :param veh_obj: vehicle obj"""
         LOG.debug(f"activate vid {veh_obj.vid} in depot {self.id} with parking vids {[x.vid for x in self.deactivated_vehicles]}")
         self.deactivated_vehicles.remove(veh_obj)
-        
+
     def pick_vehicle_to_be_active(self) -> SimulationVehicle:
         """ selects the vehicle with highest soc from the list of deactivated vehicles (does not activate the vehicle yet!)
         :return: simulation vehicle obj"""
         return max([veh for veh in self.deactivated_vehicles if veh.pos == self.pos], key = lambda x:x.soc)
-    
+
     def refill_charging(self, fleetctrl: FleetControlBase, simulation_time, keep_free_for_short_term=0):
         """This method fills empty charging slots in a depot with the lowest SOC parking (status 5) vehicles.
         The vehicles receive a locked ChargingPlanStop , which will be followed by another inactive planstop.
@@ -435,7 +435,7 @@ class Depot(ChargingStation):
                 charging_task_id = (self.ch_op_id, ch_process.id)
                 ch_ps = ChargingPlanStop(self.pos, charging_task_id=charging_task_id, earliest_start_time=start_time, duration=end_time-start_time,
                                          charging_power=selected_charging_option[5], locked=True)
-                
+
                 assert fleetctrl.veh_plans[veh_obj.vid].list_plan_stops[-1].get_state() == G_PLANSTOP_STATES.INACTIVE
                 if start_time == simulation_time:
                     LOG.debug(" -> start now")
@@ -460,7 +460,7 @@ class Depot(ChargingStation):
                     inactive_ps_2 = RoutingTargetPlanStop(self.pos, locked=True, duration=LARGE_INT, planstop_state=G_PLANSTOP_STATES.INACTIVE)
                     # new veh plan
                     new_veh_plan = VehiclePlan(veh_obj, simulation_time, fleetctrl.routing_engine, [inactive_ps_1, ch_ps, inactive_ps_2])
-                    
+
                     fleetctrl.lock_current_vehicle_plan(veh_obj.vid)
                     # assign vehicle plan
                     fleetctrl.assign_vehicle_plan(veh_obj, new_veh_plan, simulation_time, assigned_charging_task=(charging_task_id, ch_process))
@@ -491,26 +491,34 @@ class PublicChargingInfrastructureOperator:
                 self.pos_to_list_station_id[station.pos].append(station_id)
             except KeyError:
                 self.pos_to_list_station_id[station.pos] = [station_id]
-                
+
         self.max_search_radius = scenario_parameters.get(G_CH_OP_MAX_STATION_SEARCH_RADIUS)
         self.max_considered_stations = scenario_parameters.get(G_CH_OP_MAX_CHARGING_SEARCH, 100)
-        
+
         sim_start_time = scenario_parameters[G_SIM_START_TIME]
         sim_end_time = scenario_parameters[G_SIM_END_TIME]
-        
+
         self.sim_time_step = scenario_parameters[G_SIM_TIME_STEP]
-        
+
         if initial_charging_events_f is not None:
             class VehicleStruct():
                 def __init__(self) -> None:
                     self.vid = -1
-            
+
             charging_events = pd.read_csv(initial_charging_events_f)
             for station_id, start_time, end_time in zip(charging_events["charging_station_id"].values, charging_events["start_time"].values, charging_events["end_time"].values):
                 if end_time < sim_start_time or start_time > sim_end_time:
                     continue
                 self.station_by_id[station_id].add_external_booking(start_time, end_time, sim_start_time, VehicleStruct())
-                
+
+		self.electricity_price_at_station = {
+			station_id: {
+				'2024-02-01T8:00': 18.20,  # Price for Feb 1, 2024 at 8 AM.
+				'2024-02-02T9:00': 18.25,  # Price for Feb 2, 2024 at 9 AM.
+
+			}
+			for station_id in self.station_by_id
+		}
 
     def _loading_charging_stations(self, public_charging_station_file, dir_names) -> List[ChargingStation]:
         """ Loads the charging stations from the provided csv file"""
@@ -598,7 +606,23 @@ class PublicChargingInfrastructureOperator:
                 if c == self.max_considered_stations:
                     return r
         return r
-    
+
+    def get_electricity_price_at_station(self, station_id, datetime):
+		    station_prices = self.electricity_price_at_station.get(station_id, {})
+		    return station_prices.get(datetime)
+
+    def calculate_charging_cost(self, station_id, energy_amount):
+            """Method to calculate charging cost based on electricity price and energy amount"""
+            electricity_price = self.get_electricity_price_at_station(station_id)
+            return electricity_price * energy_amount
+
+    def get_stations_sorted_by_cost_and_proximity(self, position: tuple, energy_amount=None):
+        """Method to get stations sorted by both cost and proximity"""
+            stations_by_proximity = self._get_considered_stations(position)
+            stations_with_cost = [(station_id, self.calculate_charging_cost(station_id, energy_amount), self._get_considered_stations(position)) for station_id,  in stations_by_proximity]
+            return sorted(stations_with_cost, key=lambda x: (x[1].x[2]))  # sorted list
+
+
     def _remove_unrealized_bookings(self, sim_time):
         """ this method removes all planned bookings that are not ended by the update of a simulation vehicle and are there considered as not realized
         :param sim_time: simulation time"""
@@ -621,15 +645,15 @@ class PublicChargingInfrastructureOperator:
                                 charging_station.cancel_booking(sim_time, ch_process)
                             except KeyError:
                                 LOG.warning("couldnt cancel charging booking {}".format(booking_id))
-                        
-    
+
+
     def time_trigger(self, sim_time):
         """ this method is triggered in each simulation time step
         :param sim_time: simulation time"""
         t = time.time()
         self._remove_unrealized_bookings(sim_time)
         LOG.debug("charging infra time trigger took {}".format(time.time() - t))
-    
+
 
 class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperator):
     """ this class has similar functionality like a ChargingInfrastructureOperator but is unique for each MoD operator (only the corresponding operator
@@ -649,7 +673,7 @@ class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperato
         """
         super().__init__(f"op_{op_id}", depot_file, operator_attributes, scenario_parameters, dir_names, routing_engine)
         self.depot_by_id: tp.Dict[int, Depot] = {depot_id : depot for depot_id, depot in self.station_by_id.items() if depot.number_parking_spots > 0}
-        
+
     def _loading_charging_stations(self, depot_file, dir_names) -> List[Depot]:
         """ Loads the charging stations from the provided csv file"""
         stations_df = pd.read_csv(depot_file)
@@ -671,7 +695,7 @@ class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperato
                 socked_powers += [power for _ in range(number)]
             stations.append(Depot(station_id, self.ch_op_id, node_index, socked_ids, socked_powers, number_parking_spots))
         return stations
-    
+
     def find_nearest_free_depot(self, pos, check_free=True) -> Depot:
         """This method can be used to send a vehicle to the next depot.
 
@@ -690,6 +714,6 @@ class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperato
         else:
             depot = None
         return depot
-    
+
     def time_trigger(self, sim_time):
         super().time_trigger(sim_time)
