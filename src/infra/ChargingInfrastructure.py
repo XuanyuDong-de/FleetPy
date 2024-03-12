@@ -653,10 +653,10 @@ class PublicChargingInfrastructureOperator:
 
         return selected_station_id, cheapest_cost
 
-    planned_start_time = '2024-02-01T09:00'  # Example charging start time
-    energy_amount = 50
-    selected_station_id, cheapest_cost = select_cheapest_station(planned_start_time, energy_amount)
-    print(f"Selected Station ID: {selected_station_id} with Cost: {cheapest_cost}")
+        planned_start_time = '2024-02-01T09:00'  # Example charging start time
+        energy_amount = 50
+        selected_station_id, cheapest_cost = self.select_cheapest_station(planned_start_time, energy_amount)
+        print(f"Selected Station ID: {selected_station_id} with Cost: {cheapest_cost}")
 
 
     def calculate_distance(position1: tuple, position2: tuple) -> float:
