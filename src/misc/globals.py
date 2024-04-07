@@ -622,6 +622,9 @@ G_PRQS_ACC_OFFER = 3
 G_PRQS_LOCKED = 4
 G_PRQS_IN_VEH = 5
 
+# Energy related constants
+G_ENERGY_TIME_SERIES_FILE = "energy_file"  # as one of the headers of the csv file (example_energy1.csv)
+
 # Computation Time Record
 G_FCTRL_CT_RQU = "user_requests"
 G_FCTRL_CT_RQB = "request_batch"
