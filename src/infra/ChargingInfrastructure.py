@@ -497,8 +497,12 @@ class PublicChargingInfrastructureOperator:
 
         sim_start_time = scenario_parameters[G_SIM_START_TIME]
         sim_end_time = scenario_parameters[G_SIM_END_TIME]
+
+        dir_names = get_directory_dict(scenario_parameters)
         energy_file_name = scenario_parameters.get(G_ENERGY_TIME_SERIES_FILE)
-        self.electricity_prices = pd.read_csv(energy_file_name)
+        energy_file_path = os.path.join(dir_names[G_DIR_INFRA], energy_file_name)
+        self.electricity_prices = pd.read_csv(energy_file_path)
+
         self.sim_time_step = scenario_parameters[G_SIM_TIME_STEP]
 
         if initial_charging_events_f is not None:
@@ -606,9 +610,17 @@ class PublicChargingInfrastructureOperator:
 
 
     # new function here to calculate charging cost, the method could be used inside other methods.
+    def get_cheapest_station(self) -> tuple:
+        """ignore distance and select cheapest station"""
+        min_price_station = self.electricity_prices.loc[self.electricity_prices['price'].idxmin()]
+        station_id = min_price_station['station_id']
+        price = min_price_station['price']
+        # price is the only considered factor
+        return station_id, price
+
     def get_lowest_price_station(self, position: tuple) -> tp.Tuple[str, float, float]:
         """
-        get station with lowest price and travel distance to this station。
+        get the station from considered station with lowest price and travel distance to this station。
         """
         considered_stations = self._get_considered_stations(position)
         min_price = float('inf')  # regardless the changes in prices, min_price will pick the lowest one
@@ -638,22 +650,6 @@ class PublicChargingInfrastructureOperator:
         return total_cost
 
 
-
-
-
-    def select_cheapest_station(self, planned_start_time, energy_amount, planned_veh_pos):
-        "Method to iterate over all available stations and calculate charging cost, then select the cheapest option"""
-        cheapest_cost = float('inf') #set a positive infinity as an initial value, any actual calculated cost should be lower than this.
-        selected_station_id = None
-
-        considered_station_list = self._get_considered_stations(planned_veh_pos)
-        energy_amount = self.calculate_energy_needed(energy_amount)
-        for station_id in considered_station_list:
-            cost = self.calculate_charging_cost(station_id, planned_start_time, energy_amount)
-            if cost < cheapest_cost:
-                cheapest_cost = cost
-                selected_station_id = station_id
-        return selected_station_id, cheapest_cost
 
 
     def get_stations_sorted_by_cost_and_proximity(self, position: tuple, energy_amount=None):
