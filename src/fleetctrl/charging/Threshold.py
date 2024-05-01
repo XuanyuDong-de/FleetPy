@@ -27,7 +27,9 @@ class ChargingThresholdPublicInfrastructure(ChargingBase):
     in case multiple charging operators are present, the offer closest to postion is selected (also with depots)"""
     def __init__(self, fleetctrl, operator_attributes, solver="Gurobi"):
         super().__init__(fleetctrl, operator_attributes, solver=solver)
-        self.soc_threshold = operator_attributes.get(G_OP_APS_SOC, 0.1)
+        self.soc_thresIhold = operator_attributes.get(G_OP_APS_SOC, 0.1)
+        self.selection_criteria = operator_attributes.get(G_CHARGING_SELECTION)
+
 
     def time_triggered_charging_processes(self, sim_time):
         LOG.debug("time triggered charging at {}".format(sim_time))
@@ -69,14 +71,18 @@ class ChargingThresholdPublicInfrastructure(ChargingBase):
                                                                       max_number_charging_stations=self.n_stations_to_query, max_offers_per_station=self.n_offers_p_station)
                     LOG.debug(f"charging possiblilities of ch op {ch_op.ch_op_id}: {charging_possibilities}")
                     if len(charging_possibilities) > 0:
-                        # pick those with earliest finish
-                        ch_op_best = min(charging_possibilities, key=lambda x:x[3])
+                        # pick those with earliest finish (or lowest predicted charging cost)
+                        if self.selection_criteria == 'cost':
+                            ch_op_best = min(charging_possibilities, key=lambda x: x[6])  # condition here
+                        else:
+                            ch_op_best = min(charging_possibilities, key=lambda x: x[3])
+
                         if best_charging_poss is None or ch_op_best[3] < best_charging_poss[3]:
                             best_charging_poss = ch_op_best
                             best_ch_op = ch_op
                 if best_charging_poss is not None:
                     LOG.debug(f" -> best charging possibility: {best_charging_poss}")
-                    (station_id, socket_id, possible_start_time, possible_end_time, desired_veh_soc, max_charging_power) = best_charging_poss
+                    (station_id, socket_id, possible_start_time, possible_end_time, desired_veh_soc, max_charging_power, predicted_charging_cost) = best_charging_poss
                     booking = best_ch_op.book_station(sim_time, veh_obj, station_id, socket_id, possible_start_time, possible_end_time)
                     station = best_ch_op.station_by_id[station_id]
                     start_time, end_time = booking.get_scheduled_start_end_times()
