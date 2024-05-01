@@ -624,6 +624,7 @@ G_PRQS_IN_VEH = 5
 
 # Energy related constants
 G_ENERGY_TIME_SERIES_FILE = "energy_file"  # as one of the headers of the csv file (example_energy1.csv)
+G_CHARGING_SELECTION = "op_charging_selection_criteria"  # in constant_config_energy, value as cost or time
 
 # Computation Time Record
 G_FCTRL_CT_RQU = "user_requests"
