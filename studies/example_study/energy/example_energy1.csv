@@ -1,0 +1,2 @@
+op_module,scenario_name,rq_file,op_fleet_composition,energy_file,op_charging_selection_criteria
+PoolingIRSOnly,example_charge_pool_irsonly_sc_1,example_100.csv,low_range_vehtype:5,charging_station1.csv,cost
