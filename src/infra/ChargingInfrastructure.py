@@ -25,6 +25,7 @@ from src.misc.globals import *
 from src.simulation.StationaryProcess import ChargingProcess
 from src.fleetctrl.planning.VehiclePlan import ChargingPlanStop, VehiclePlan, RoutingTargetPlanStop
 from src.misc.config import decode_config_str
+from src.infra.CostManager import CostManager
 if TYPE_CHECKING:
     from src.routing.NetworkBase import NetworkBase
     from src.simulation.Vehicles import SimulationVehicle
@@ -107,7 +108,7 @@ class ChargingStation:
     station_history = defaultdict(list)
     station_history_file_path = None
 
-    def __init__(self, station_id, ch_op_id, node, socket_ids, max_socket_powers: List[float]):
+    def __init__(self, station_id, ch_op_id, node, socket_ids, max_socket_powers: List[float], scenario_parameters: dict):
         self.id = station_id
         self.ch_op_id = ch_op_id
         self.pos = (node, None, None)
@@ -120,6 +121,10 @@ class ChargingStation:
         self._booked_processes: Dict[str, ChargingProcess] = {}
         self._socket_bookings: Dict[int, List[ChargingProcess]] = {ID: [] for ID in self._sockets}
         self._current_processes: Dict[int, Optional[ChargingProcess]] = {ID: None for ID in self._sockets}
+        self.scenario_parameters = scenario_parameters
+        self.cost_manager = CostManager(scenario_parameters)
+        self.charging_cost = None
+        # one cost manager instance for one charging station
 
     def __add_to_scheduled(self, booking: ChargingProcess):
         self._booked_processes[booking.id] = booking
@@ -330,6 +335,19 @@ class ChargingStation:
             self.make_booking(sim_time, found_socked, veh_struct, start_time=start_time, end_time=end_time)
             return True
 
+    def get_cost(self, sim_time, vehicle, planned_start_time, planned_start_soc, desired_end_soc):
+        charge_durations = self.calculate_charge_durations(vehicle, planned_start_soc, desired_end_soc)
+        for socket_id, socket_schedule in self.get_current_schedules(sim_time).items():
+            estimated_start_time = planned_start_time  # the imported time should be: the time to start charging
+            socket_charge_duration = charge_durations[socket_id]
+            estimated_end_time = estimated_start_time + socket_charge_duration
+            charging_amount = self._sockets[socket_id].max_socket_power
+            self.charging_cost = self.cost_manager.get_cost_estimated(self.id, estimated_start_time, estimated_end_time,
+                                                                      charging_amount)
+            return self.charging_cost
+
+
+
     def __append_to_history(self, sim_time, vehicle, event_name, socket=None):
         if self.station_history_file_path is not None:
             self.station_history["time"].append(sim_time)
@@ -345,6 +363,7 @@ class ChargingStation:
             self.station_history["initial_soc"].append("" if socket is None else round(socket.initial_soc, 3))
             self.station_history["transferred_power"].append("" if socket is None else socket.transferred_power)
             self.station_history["connection_duration"].append("" if socket is None else sim_time - socket.connect_time)
+            self.station_history["charging_cost"].append("" if self.charging_cost is None else self.charging_cost)
             if len(self.station_history) > 0:
                 self.write_history_to_file()
 
@@ -368,10 +387,12 @@ class ChargingStation:
 # TODO # keep track of parking (inactive) vehicles | query parking lots
 class Depot(ChargingStation):
     """This class represents a charging station with parking lots for inactive vehicles."""
-    def __init__(self, station_id, ch_op_id, node, socket_ids, max_socket_powers: List[float], number_parking_spots):
-        super().__init__(station_id, ch_op_id, node, socket_ids, max_socket_powers)
+    def __init__(self, station_id, ch_op_id, node, socket_ids, max_socket_powers: List[float], number_parking_spots, scenario_parameters: dict):
+        super().__init__(station_id, ch_op_id, node, socket_ids, max_socket_powers, scenario_parameters)
         self.number_parking_spots = number_parking_spots
         self.deactivated_vehicles: tp.List[SimulationVehicle] = []
+        self.scenario_parameters = scenario_parameters
+
 
     @property
     def free_parking_spots(self):
@@ -483,6 +504,7 @@ class PublicChargingInfrastructureOperator:
         self.ch_op_id = ch_op_id
         self.routing_engine = routing_engine
         self.ch_operator_attributes = ch_operator_attributes
+        self.scenario_parameters = scenario_parameters
         self.charging_stations: tp.List[ChargingStation] = self._loading_charging_stations(public_charging_station_file, dir_names)
         self.station_by_id: tp.Dict[int, ChargingStation] = {station.id: station for station in self.charging_stations}
         self.pos_to_list_station_id: tp.Dict[tuple, tp.List[int]] = {}
@@ -498,12 +520,13 @@ class PublicChargingInfrastructureOperator:
         sim_start_time = scenario_parameters[G_SIM_START_TIME]
         sim_end_time = scenario_parameters[G_SIM_END_TIME]
 
-        dir_names = get_directory_dict(scenario_parameters)
-        energy_file_name = scenario_parameters.get(G_ENERGY_TIME_SERIES_FILE)
-        energy_file_path = os.path.join(dir_names[G_DIR_INFRA], energy_file_name)
-        self.electricity_prices = pd.read_csv(energy_file_path)
+        # dir_names = get_directory_dict(scenario_parameters)
+        # energy_file_name = scenario_parameters.get(G_ENERGY_TIME_SERIES_FILE)
+        # energy_file_path = os.path.join(dir_names[G_DIR_INFRA], energy_file_name)
+        # self.electricity_prices = pd.read_csv(energy_file_path)
 
         self.sim_time_step = scenario_parameters[G_SIM_TIME_STEP]
+
 
         if initial_charging_events_f is not None:
             class VehicleStruct():
@@ -515,7 +538,6 @@ class PublicChargingInfrastructureOperator:
                 if end_time < sim_start_time or start_time > sim_end_time:
                     continue
                 self.station_by_id[station_id].add_external_booking(start_time, end_time, sim_start_time, VehicleStruct())
-
 
 
 
@@ -537,7 +559,7 @@ class PublicChargingInfrastructureOperator:
             socked_powers = []
             for power, number in cunit_dict.items():
                 socked_powers += [power for _ in range(number)]
-            stations.append(ChargingStation(station_id, self.ch_op_id, node_index, socked_ids, socked_powers))
+            stations.append(ChargingStation(station_id, self.ch_op_id, node_index, socked_ids, socked_powers, self.scenario_parameters))
         return stations
 
     def modify_booking(self, sim_time, booking: ChargingProcess):
@@ -555,7 +577,7 @@ class PublicChargingInfrastructureOperator:
 
     def get_charging_slots(self, sim_time, vehicle: SimulationVehicle, planned_start_time, planned_veh_pos,
                            planned_veh_soc, desired_veh_soc, max_number_charging_stations=1, max_offers_per_station=1) \
-            -> tp.List[tp.Tuple[int, int, int, int, float, float, float, float]]:  # should contain cost
+            -> tp.List[tp.Tuple[int, int, int, int, float, float, float, float]]:
         """ Returns specific charging possibilities for a vehicle at a future time, place with estimated SOC and desired SOC.
 
         :param sim_time: current simulation time
@@ -574,15 +596,12 @@ class PublicChargingInfrastructureOperator:
         c = 0
         for station_id, tt, dis in considered_station_list:
             station = self.station_by_id[station_id]
-            estimated_arrival_time = planned_start_time + tt
+            estimated_arrival_time = planned_start_time + tt  # time start to charge?
             list_station_offers = station.get_charging_slots(sim_time, vehicle, estimated_arrival_time, planned_veh_soc, desired_veh_soc, max_offers_per_station=max_offers_per_station)
             list_station_offers_with_costs = []
             for offer in list_station_offers:
                 station_id, socket_id, possible_start_time, possible_end_time, expected_end_soc, max_power = offer
-                charging_duration = possible_end_time - possible_start_time
-                charging_amount = max_power * charging_duration / 3600
-                current_price = self.electricity_prices.loc[station_id, 'price']
-                predicted_charging_cost = charging_amount * current_price
+                predicted_charging_cost = station.get_cost(sim_time, vehicle, possible_start_time, planned_veh_soc, desired_veh_soc)  #
                 offer_with_costs = offer + (predicted_charging_cost,)
                 list_station_offers_with_costs.append(offer_with_costs)
 
@@ -616,44 +635,45 @@ class PublicChargingInfrastructureOperator:
                 if c == self.max_considered_stations:
                     return r
         return r
+    # dis represents travel distance which returned by return_travel_costs_1toX, as form of tuple in r_list.
+
 
     # new function here to calculate charging cost, the method could be used inside other methods.
-    def get_nearest_station(self, position: tuple) -> tuple:
-        """pick the nearest station and don't consider the prices"""
-        considered_stations = self._get_considered_stations(position)
-        if considered_stations:
-            nearest_station = considered_stations[0]  # the first item in considered station list is the nearest ome
-            station_id, travel_time, distance = nearest_station
-            # get the price
-            price = self.electricity_prices[self.electricity_prices['station_id'] == station_id]['electricity_price'].iloc[0]
-            return station_id, travel_time, distance, price
-        return None
-
-    def get_cheapest_station(self) -> tuple:
-        """ignore distance and select the cheapest station"""
-        min_price_station = self.electricity_prices.loc[self.electricity_prices['price'].idxmin()]
-        station_id = min_price_station['station_id']
-        price = min_price_station['price']
-        # price is the only considered factor
-        return station_id, price
-
-    def get_lowest_price_station(self, position: tuple) -> tp.Tuple[str, float, float]:
-        """
-        get the station from considered station list with lowest price and travel distance to this station。
-        """
-        considered_stations = self._get_considered_stations(position)
-        min_price = float('inf')  # regardless the changes in prices, min_price will pick the lowest one
-        selected_station = None
-
-        for station_id, _, dis in considered_stations:
-            price = self.electricity_prices[self.electricity_prices['station_id'] == station_id][
-                'electricity_price'].min()
-            if price < min_price:
-                min_price = price
-                selected_station = (station_id, dis, price)
-
-        return selected_station
-
+    # def get_nearest_station(self, position: tuple) -> tuple:
+    #     """pick the nearest station and don't consider the prices"""
+    #     considered_stations = self._get_considered_stations(position)
+    #     if considered_stations:
+    #         nearest_station = considered_stations[0]  # the first item in considered station list is the nearest ome
+    #         station_id, travel_time, distance = nearest_station
+    #         # get the price
+    #         price = self.electricity_prices[self.electricity_prices['station_id'] == station_id]['electricity_price'].iloc[0]
+    #         return station_id, travel_time, distance, price
+    #     return None
+    #
+    # def get_cheapest_station(self) -> tuple:
+    #     """ignore distance and select the cheapest station"""
+    #     min_price_station = self.electricity_prices.loc[self.electricity_prices['price'].idxmin()]
+    #     station_id = min_price_station['station_id']
+    #     price = min_price_station['price']
+    #     # price is the only considered factor
+    #     return station_id, price
+    #
+    # def get_lowest_price_station(self, position: tuple) -> tp.Tuple[str, float, float]:
+    #     """
+    #     get the station from considered station list with lowest price and travel distance to this station。
+    #     """
+    #     considered_stations = self._get_considered_stations(position)
+    #     min_price = float('inf')  # regardless the changes in prices, min_price will pick the lowest one
+    #     selected_station = None
+    #
+    #     for station_id, _, dis in considered_stations:
+    #         price = self.electricity_prices[self.electricity_prices['station_id'] == station_id][
+    #             'electricity_price'].min()
+    #         if price < min_price:
+    #             min_price = price
+    #             selected_station = (station_id, dis, price)
+    #
+    #     return selected_station
 
     # def calculate_total_cost(self, position: tuple, socket_id, vehicle, init_soc, final_soc=1.0):
     #     """
@@ -667,9 +687,6 @@ class PublicChargingInfrastructureOperator:
     #     travel_cost = vehicle.compute_soc_consumption(distance) * vehicle.battery_size * price # assume that travel cost is combined with electricity prices
     #     total_charging_cost = charging_cost + travel_cost
     #     return total_charging_cost
-
-
-
 
     # def get_stations_sorted_by_cost_and_proximity(self, position: tuple, energy_amount=None):
     #     """Method to get stations sorted by both cost and proximity"""
@@ -744,6 +761,7 @@ class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperato
         super().__init__(f"op_{op_id}", depot_file, operator_attributes, scenario_parameters, dir_names, routing_engine)
         self.depot_by_id: tp.Dict[int, Depot] = {depot_id : depot for depot_id, depot in self.station_by_id.items() if depot.number_parking_spots > 0}
 
+
     def _loading_charging_stations(self, depot_file, dir_names) -> List[Depot]:
         """ Loads the charging stations from the provided csv file"""
         stations_df = pd.read_csv(depot_file)
@@ -763,7 +781,7 @@ class OperatorChargingAndDepotInfrastructure(PublicChargingInfrastructureOperato
             socked_powers = []
             for power, number in cunit_dict.items():
                 socked_powers += [power for _ in range(number)]
-            stations.append(Depot(station_id, self.ch_op_id, node_index, socked_ids, socked_powers, number_parking_spots))
+            stations.append(Depot(station_id, self.ch_op_id, node_index, socked_ids, socked_powers, number_parking_spots, self.scenario_parameters))
         return stations
 
     def find_nearest_free_depot(self, pos, check_free=True) -> Depot:
