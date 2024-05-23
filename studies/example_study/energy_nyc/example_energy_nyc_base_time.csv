@@ -1,0 +1,2 @@
+op_module,scenario_name,rq_file,op_fleet_composition,energy_file,op_charging_selection_criteria
+PoolingIRSOnly,base_scenario_strategy_time,demand_nyc_2019_0.1.csv,2022_bmw_i4_m50:135;2019_nissan_leaf:135,charging_stations_nyc_prices.csv,time

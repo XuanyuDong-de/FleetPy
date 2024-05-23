@@ -200,10 +200,10 @@ if __name__ == "__main__":
         with open(LOG_F, "w") as _:
             pass
 
-        scs_path = os.path.join(os.path.dirname(__file__), "studies", "example_study", "energy")
+        scs_path = os.path.join(os.path.dirname(__file__), "studies", "example_study", "energy_nyc")
         log_level = "info"
-        cc = os.path.join(scs_path, "constant_config_energy2.csv")
-        sc = os.path.join(scs_path, "example_energy2.csv")
+        cc = os.path.join(scs_path, "constant_config_energy_nyc.csv")
+        sc = os.path.join(scs_path, "example_energy_nyc_base_time.csv")
         run_scenarios(cc, sc, log_level=log_level, n_cpu_per_sim=1, n_parallel_sim=1)
         list_results = read_outputs_for_comparison(cc, sc)
         all_scenario_assert_dict = {0: {"number users": 88}}

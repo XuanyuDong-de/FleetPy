@@ -9,7 +9,7 @@ infra_structure_name,example_infra
 rq_file,
 random_seed,0
 start_time,0
-end_time,7200
+end_time,7200 # 1day
 time_step,60
 route_output_flag,True
 replay_flag,True
