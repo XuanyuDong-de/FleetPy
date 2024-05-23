@@ -1,0 +1,2 @@
+op_module,scenario_name,rq_file,op_fleet_composition,energy_file,op_charging_selection_criteria
+PoolingIRSOnly,example_charge_pool_irsonly_sc_1,demand_nyc_2019_0.1.csv,2019_fiat_500e:66;2019_nissan_leaf:67,charging_stations_nyc_prices.csv,cost
