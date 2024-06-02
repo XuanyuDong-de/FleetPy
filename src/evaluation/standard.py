@@ -94,17 +94,6 @@ def read_user_output_file(output_dir, evaluation_start_time = None, evaluation_e
     return user_stats
 
 
-def read_charging_output_file(output_dir, evaluation_start_time = None, evaluation_end_time = None) -> pd.DataFrame:
-    """This method read output file for charging and return its dataframe"""
-    charging_stats_df = pd.read_csv(os.path.join(output_dir, "4_charging_stats.csv"))
-    if evaluation_start_time is not None:
-        charging_stats_df = charging_stats_df[charging_stats_df[G_RQ_TIME] >= evaluation_start_time]
-    if evaluation_end_time is not None:
-        charging_stats_df = charging_stats_df[charging_stats_df[G_RQ_TIME] < evaluation_end_time]
-    return charging_stats_df
-
-
-
 def decode_offer_str(offer_str):
     """ create a dictionary from offer_str in outputfile """
     offer_dict = {}
@@ -354,7 +343,6 @@ def standard_evaluation(output_dir, evaluation_start_time = None, evaluation_end
         op_var_costs = np.nan
         op_co2 = np.nan
         op_ext_em_costs = np.nan
-        op_charging_costs = np.nan
 
         if op_id >= 0:  #AMoD
             op_name = "MoD_{}".format(int(op_id))
@@ -483,15 +471,6 @@ def standard_evaluation(output_dir, evaluation_start_time = None, evaluation_end
             op_avg_velocity = op_total_km/driving_time*3600.0
             op_trip_velocity = trip_direct_distance/op_user_sum_travel_time*3.6
 
-            #charging cost
-            dir_names = get_directory_dict(scenario_parameters)
-            energy_file_name = scenario_parameters.get(G_ENERGY_TIME_SERIES_FILE)
-            energy_file_path = os.path.join(dir_names[G_DIR_INFRA], energy_file_name)
-            electricity_prices = pd.read_csv(energy_file_path)
-            charging_stats_df = read_charging_output_file(output_dir, evaluation_start_time=evaluation_start_time, evaluation_end_time=evaluation_end_time)
-            charging_cost = electricity_prices['price'] * charging_stats_df['transferred_power']
-            op_charging_costs = charging_cost.sum()
-
 
             # by vehicle stats
             # ----------------
@@ -607,7 +586,6 @@ def standard_evaluation(output_dir, evaluation_start_time = None, evaluation_end
         result_dict["toll"] = op_toll
         result_dict["customer in vehicle distance"] = avg_in_vehicle_distance(op_vehicle_df)
         result_dict["shared rides [%]"] = shared_rides(op_vehicle_df)
-        result_dict["total charging costs"] = op_charging_costs
 
         result_dict_list.append(result_dict)
         operator_names.append(op_name)
